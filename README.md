@@ -1,9 +1,6 @@
 # collage-gan
 
-Run cs236g_final_proj_milestone1.ipynb in a CUDA environment for visualizing training data, training the light-weight GAN and evaluating/visualizing the results. 
-Details about what each part of code do are included in the notebook.
-
-To train a lightweightgan model, run
+To train a FastGAN model, run
 ```bash
 $ python train.py --im_size 256 --iter 50000 --name exp1
 ```
