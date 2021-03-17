@@ -32,7 +32,6 @@ def crop_image_by_part(image, part):
     if part==3:
         return image[:,:,hw:,hw:]
 
-# criterionQ_con = lambda c_true, mean, logvar: Normal(mean, logvar.exp()).log_prob(c_true).mean()    
 
 class log_gaussian:
 
@@ -104,7 +103,7 @@ def train(args):
     trans = transforms.Compose(transform_list)
     
     dataset = ImageFolder(root=data_root, transform=trans)
-    dataloader = iter(DataLoader(dataset, batch_size=batch_size, shuffle=False,
+    dataloader = iter(DataLoader(dataset, batch_size=batch_size, shuffle=False, drop_last=True,
                       sampler=InfiniteSamplerWrapper(dataset), num_workers=dataloader_workers, pin_memory=True))
 
 
@@ -121,8 +120,8 @@ def train(args):
 
     from pytorch_model_summary import summary
 
-    print(summary( netG, torch.zeros((1, 256+args.infogan_latent_dim+spatial_infogan_size*args.spatial_code_dim)).to(device), show_input=False))
-    print(summary( netD, torch.zeros((1, 3, im_size, im_size)).to(device), 'True', show_input=False))
+    # print(summary( netG, torch.zeros((1, 256+args.infogan_latent_dim+spatial_infogan_size*args.spatial_code_dim)).to(device), show_input=False))
+    # print(summary( netD, torch.zeros((1, 3, im_size, im_size)).to(device), 'True', show_input=False))
 
     avg_param_G = copy_G_params(netG)
 
@@ -196,10 +195,9 @@ def train(args):
     if args.spatial_code_dim:
         optimizerQ = optim.Adam([{'params': netD.latent_from_128.parameters()}, \
                                 {'params': netD.conv_q.parameters()},
-                                {'params': netD.spatial_latent_from_128.parameters()},
-                                {'params': netD.spatial_conv_q.parameters()}], \
+                                {'params': netD.spatial_latent_from_128.parameters()}],
+                                # {'params': netD.spatial_conv_q.parameters()}], \
                                 lr=args.q_lr, betas=(nbeta1, 0.999))
-    # import ipdb; ipdb.set_trace()
     
     if checkpoint != 'None':
         ckpt = torch.load(checkpoint)
@@ -252,19 +250,20 @@ def train(args):
             pred_g, q_pred = netD(fake_images, "fake")
             if not args.spatial_code_dim:
                 q_mu, q_logvar = q_pred[:, :args.infogan_latent_dim], q_pred[:, args.infogan_latent_dim:]
-                info_loss = criterionQ_con(latent, q_mu, q_logvar.exp())
+                info_total_loss = criterionQ_con(latent, q_mu, q_logvar.exp())
             else:
-                q_pred, sq_pred, s_part = q_pred
+                q_pred, s_list = q_pred
                 q_mu, q_logvar = q_pred[:, :args.infogan_latent_dim], q_pred[:, args.infogan_latent_dim:]
-                sq_mu, sq_logvar = sq_pred[:, :args.spatial_code_dim], sq_pred[:, args.spatial_code_dim:]
                 info_loss = criterionQ_con(latent[:, :args.infogan_latent_dim], q_mu, q_logvar.exp())
-                s_info_loss = criterionQ_con(latent[:, \
-                    args.infogan_latent_dim+s_part*args.spatial_code_dim : \
-                    args.infogan_latent_dim+(s_part+1)*args.spatial_code_dim], sq_mu, sq_logvar.exp())
+                s_info_loss = 0
+                for part in range(4):
+                    sq_mu, sq_logvar = s_list[part][:, :args.spatial_code_dim], s_list[part][:, args.spatial_code_dim:]
+                    s_info_loss += criterionQ_con(latent[:, \
+                        args.infogan_latent_dim+part*args.spatial_code_dim : \
+                        args.infogan_latent_dim+(part+1)*args.spatial_code_dim], sq_mu, sq_logvar.exp())
 
-                info_total_loss = s_info_loss + info_loss
+                info_total_loss = s_info_loss/4 + info_loss
 
-            # import ipdb; ipdb.set_trace()
             err_g = info_total_loss*args.info_lambda - pred_g.mean()
             err_g.backward()
             optimizerG.step()
@@ -281,9 +280,9 @@ def train(args):
 
         if iteration % 100 == 0:
             if args.spatial_code_dim:
-                print("GAN: loss d: %.5f    loss g: %.5f    loss info: %.5f    loss s info: %.5f"%(err_dr, -err_g.item(), -info_loss*args.info_lambda, -s_info_loss*args.info_lambda))
+                print("GAN: loss d: %.5f    loss g: %.5f    loss info: %.5f    loss s info: %.5f"%(err_dr, -err_g.item(), -info_loss*args.info_lambda, -s_info_loss*args.info_lambda/4))
             elif args.infogan_latent_dim:
-                print("GAN: loss d: %.5f    loss g: %.5f    loss info: %.5f"%(err_dr, -err_g.item(), -info_loss*args.info_lambda))
+                print("GAN: loss d: %.5f    loss g: %.5f    loss info: %.5f"%(err_dr, -err_g.item(), -info_total_loss*args.info_lambda))
             else:
                 print("GAN: loss d: %.5f    loss g: %.5f"%(err_dr, -err_g.item()))
 
@@ -292,22 +291,17 @@ def train(args):
             load_params(netG, avg_param_G)
             with torch.no_grad():
                 vutils.save_image(netG(fixed_noise)[0].add(1).mul(0.5), saved_image_folder+'/%d.jpg'%iteration, nrow=8)
-                vutils.save_image(netG(traversal_z_1)[0].add(1).mul(0.5), saved_image_folder+'/trav1_%d.jpg'%iteration, nrow=num_steps+1)
-                vutils.save_image(netG(traversal_z_2)[0].add(1).mul(0.5), saved_image_folder+'/trav2_%d.jpg'%iteration, nrow=num_steps+1)
-                if args.spatial_code_dim:
-                    vutils.save_image(netG(traversal_corner)[0].add(1).mul(0.5), saved_image_folder+'/trav_c_%d.jpg'%iteration, nrow=num_steps+1)
+                if args.use_infogan:
+                    vutils.save_image(netG(traversal_z_1)[0].add(1).mul(0.5), saved_image_folder+'/trav1_%d.jpg'%iteration, nrow=num_steps+1)
+                    vutils.save_image(netG(traversal_z_2)[0].add(1).mul(0.5), saved_image_folder+'/trav2_%d.jpg'%iteration, nrow=num_steps+1)
+                    if args.spatial_code_dim:
+                        vutils.save_image(netG(traversal_corner)[0].add(1).mul(0.5), saved_image_folder+'/trav_c_%d.jpg'%iteration, nrow=num_steps+1)
                     
-                # if not args.no_decode:
-                #     vutils.save_image( torch.cat([
-                #             F.interpolate(real_image, 128), 
-                #             rec_img_all, rec_img_small,
-                #             rec_img_part]).add(1).mul(0.5), saved_image_folder+'/rec_%d.jpg'%iteration )
             load_params(netG, backup_para)
 
         if iteration % (save_interval*50) == 0 or iteration == total_iterations:
             backup_para = copy_G_params(netG)
             load_params(netG, avg_param_G)
-            # torch.save({'g':netG.state_dict(),'d':netD.state_dict()}, saved_model_folder+'/%d.pth'%iteration)
             load_params(netG, backup_para)
             states = {'g':netG.state_dict(),
                         'd':netD.state_dict(),
@@ -330,7 +324,6 @@ if __name__ == "__main__":
     parser.add_argument('--im_size', type=int, default=512, help='image resolution')
     parser.add_argument('--ckpt', type=str, default='None', help='checkpoint weight path')
     parser.add_argument('--infogan_latent_dim', type=int, default=0, help='infogan latent dim, do not use if = 0')
-    parser.add_argument('--infogan_cat_size', type=list, default=None, help='infogan latent categorical code size, do not use if = None')
     parser.add_argument('--spatial_code_dim', type=int, default=0, help='use spatial latent, dimension for each block, do not use if = 0')
     parser.add_argument('--info_lambda', type=float, default=0.1, help='infogan latent dim, do not use if = 0')
     parser.add_argument('--q_lr', type=float, default=0, help='q head learning rate, 0 if backprop through entire D')
