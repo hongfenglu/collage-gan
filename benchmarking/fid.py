@@ -8,19 +8,18 @@ from scipy import linalg
 from tqdm import tqdm
 
 from torchvision import transforms
-from torchvision.datasets import ImageFolder
+from operation import ImageFolder, InfiniteSamplerWrapper
 from torch.utils.data import DataLoader
 
 from calc_inception import load_patched_inception_v3
-import os
+from pytorch_fid import fid_score
 
 @torch.no_grad()
 def extract_features(loader, inception, device):
-    pbar = tqdm(loader)
-
     feature_list = []
 
-    for img,_ in pbar:
+    for iteration in tqdm(range(128)):
+        img = next(loader)
         img = img.to(device)
         feature = inception(img)[0].view(img.shape[0], -1)
         feature_list.append(feature.to('cpu'))
@@ -61,49 +60,46 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--batch', type=int, default=64)
+    parser.add_argument('--batch', type=int, default=16)
     parser.add_argument('--size', type=int, default=256)
-    parser.add_argument('--path_a', type=str)
-    parser.add_argument('--path_b', type=str)
-    parser.add_argument('--iter', type=int, default=3)
-    parser.add_argument('--end', type=int, default=13)
+    parser.add_argument('--epoch', type=int, default=30000)
+    parser.add_argument('--path_a', type=str, default='./data/collage/train')
+    parser.add_argument('--name', type=str, default='new512')
 
     args = parser.parse_args()
 
     inception = load_patched_inception_v3().eval().to(device)
+    torch.cuda.empty_cache()
 
     transform = transforms.Compose(
         [
             transforms.Resize( (args.size, args.size) ),
-            #transforms.RandomHorizontalFlip(p=0.5 if args.flip else 0),
             transforms.ToTensor(),
             transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
         ]
     )
 
-    dset_a = ImageFolder(args.path_a, transform)
-    loader_a = DataLoader(dset_a, batch_size=args.batch, num_workers=4)
+    path_b = './fake/'+args.name+'/eval_%d'%(args.epoch)
+    dset_b = ImageFolder(root=path_b, transform=transform)
+    loader_b = iter(DataLoader(dset_b, batch_size=args.batch, num_workers=4, sampler=InfiniteSamplerWrapper(dset_b)))
+
+
+    features_b = extract_features(loader_b, inception, device).numpy()
+    print(f'extracted {features_b.shape[1]} features')
+
+    sample_mean = np.mean(features_b, 0)
+    sample_cov = np.cov(features_b, rowvar=False)
+
+
+    dset_a = ImageFolder(root=args.path_a, transform=transform)
+    loader_a = iter(DataLoader(dset_a, batch_size=args.batch, num_workers=4, sampler=InfiniteSamplerWrapper(dset_a)))
 
     features_a = extract_features(loader_a, inception, device).numpy()
-    print(f'extracted {features_a.shape[0]} features')
+    print(f'extracted {features_a.shape[1]} features')
 
     real_mean = np.mean(features_a, 0)
     real_cov = np.cov(features_a, rowvar=False)
-    
-    #for folder in os.listdir(args.path_b):
-    for folder in range(args.iter,args.end+1):
-        folder = 'eval_%d'%(folder*10000)
-        if os.path.exists(os.path.join( args.path_b, folder )):
-            print(folder)
-            dset_b = ImageFolder( os.path.join( args.path_b, folder ), transform)
-            loader_b = DataLoader(dset_b, batch_size=args.batch, num_workers=4)
 
-            features_b = extract_features(loader_b, inception, device).numpy()
-            print(f'extracted {features_b.shape[0]} features')
+    fid = calc_fid(sample_mean, sample_cov, real_mean, real_cov)
 
-            sample_mean = np.mean(features_b, 0)
-            sample_cov = np.cov(features_b, rowvar=False)
-
-            fid = calc_fid(sample_mean, sample_cov, real_mean, real_cov)
-
-            print(folder, ' fid:', fid)
+    print(args.epoch, ' fid:', fid)
