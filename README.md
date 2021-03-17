@@ -25,3 +25,14 @@ with the following tags:
 - `--method`: one of the following: latent_traversal (traversing the latent code in infogan loss case), sample_fixed_latent (fix latent code and sample noise vectors), sample_fixed_noise (fix noise vector and sample latent code), interpolation (interpolate between two random noise)
 - `--num_samples`: number of samples to generate for method "sample_fixed_latent" and "sample_fixed_noise"
 - `--num_steps`: number of steps to take in latent traversal or interpolation
+
+To calculate FID scores, first run 
+```bash
+$ python eval.py
+```
+with `--name` and `--epoch` to specify the model and the iteration, and other flags specifiying the hyperparamters.
+Then, run 
+```bash
+$ python benchmarking/fid.py
+```
+with the same `--name` and `--epoch`. `--path_a ./data/collage/train` calculates train FID;  `--path_a ./data/collage/dev` calculates dev FID.
