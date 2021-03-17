@@ -5,11 +5,11 @@ To train a FastGAN model, run
 $ python train.py --im_size 256 --iter 50000 --name exp1
 ```
 
-To train with infogan loss, include the following additional tags with your choice of hyperparameters:
+To train with InfoGAN loss, include the following additional tags with your choice of hyperparameters:
 - `--use_infogan`
-- `--q_lr`: must specify a positive number, suggested using 0.0001 
-- `--info_lambda`: must specify a positive number, such as 0.1, 1, 10, etc. 
-- `--infogan_latent_dim`: must specify a positive integar
+- `--q_lr`: need to specify a positive number, suggested using 0.0001 
+- `--info_lambda`: need to specify a positive number, such as 0.1, 1, 10, etc. 
+- `--infogan_latent_dim`: need to specify a positive integar
 
 To train with spatial infogan loss, include the following additional tag:
 - `--spatial_code_dim`: must specify a positive integar
