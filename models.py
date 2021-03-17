@@ -245,6 +245,10 @@ class Discriminator(nn.Module):
         self.decode = decode
         self.infogan_latent_dim = infogan_latent_dim
         self.spatial_code_dim = spatial_code_dim
+        self.pad0 = torch.Tensor([0]).repeat(16, 1, 64, 64).to('cuda:0')
+        self.pad1 = torch.Tensor([1]).repeat(16, 1, 64, 64).to('cuda:0')
+        self.pad2 = torch.Tensor([2]).repeat(16, 1, 64, 64).to('cuda:0')
+        self.pad3 = torch.Tensor([3]).repeat(16, 1, 64, 64).to('cuda:0')
 
         if infogan_cat_size != None:
             self.infogan_n_cat_codes = infogan_cat_size[0]
@@ -310,12 +314,11 @@ class Discriminator(nn.Module):
             self.conv_q = conv2d(128, infogan_latent_dim*2, 1, bias=False)
 
         if self.spatial_code_dim: #(2x2, 4 corners)
-            self.spatial_latent_from_128 = nn.Sequential(DownBlock(ndf*4, ndf*4), # 256x8x8 (1/4 of feat_small) -> 256x4x4
-                                                conv2d(ndf*4, 128, 4, bias=False), # 256x1x1
-                                                batchNorm2d(128),
-                                                nn.LeakyReLU(0.2, inplace=False))
-
-            self.spatial_conv_q = conv2d(128, self.spatial_code_dim*2, 1, bias=False) # 2 latent code for each 1/4 image
+            self.spatial_latent_from_128 = nn.Sequential(conv2d(nc+1, ndf//2, 4, 2, 1, bias=False), nn.LeakyReLU(0.2, inplace=True), #32
+                                            DownBlock(ndf//2,  ndf*1),  #16
+                                            DownBlock(ndf*1,  ndf*2),   #8
+                                            DownBlock(ndf*2,  ndf*2),   #4
+                                            conv2d(128, self.spatial_code_dim*2, 4, 1, 0, bias=False))
         
     def forward(self, imgs, label):
         if type(imgs) is not list:
@@ -332,7 +335,7 @@ class Discriminator(nn.Module):
         if self.sle:
             feat_32 = self.se_4_32(feat_4, feat_32)
         
-        feat_last = self.down_64(feat_32)
+        feat_last = self.down_64(feat_32)   # 8 x 8
         if self.sle:
             feat_last = self.se_8_64(feat_8, feat_last)
 
@@ -346,17 +349,10 @@ class Discriminator(nn.Module):
             q_pred = self.conv_q(y).squeeze()
 
         if self.spatial_code_dim:
-            spatial_part = random.randint(0, spatial_infogan_size-1) #default 4, reconstruct part img
-            s = None
-            if spatial_part==0:
-                s = self.spatial_latent_from_128(feat_32[:,:,:8,:8])
-            if spatial_part==1:
-                s = self.spatial_latent_from_128(feat_32[:,:,:8,8:])
-            if spatial_part==2:
-                s = self.spatial_latent_from_128(feat_32[:,:,8:,:8])
-            if spatial_part==3:
-                s = self.spatial_latent_from_128(feat_32[:,:,8:,8:])
-            sq_pred = self.spatial_conv_q(s).squeeze() # dim spatial_code_dim*2
+            s0 = self.spatial_latent_from_128(torch.cat([imgs[1][:,:,:64,:64],self.pad0], dim=1)).squeeze()
+            s1 = self.spatial_latent_from_128(torch.cat([imgs[1][:,:,:64,64:],self.pad1], dim=1)).squeeze()
+            s2 = self.spatial_latent_from_128(torch.cat([imgs[1][:,:,64:,:64],self.pad2], dim=1)).squeeze()
+            s3 = self.spatial_latent_from_128(torch.cat([imgs[1][:,:,64:,64:],self.pad3], dim=1)).squeeze()
         
         if label=='real' and self.decode:    
             rec_img_big = self.decoder_big(feat_last) # reconstruct big img
@@ -379,7 +375,7 @@ class Discriminator(nn.Module):
             return torch.cat([rf_0, rf_1], dim=1), q_pred
 
         if self.spatial_code_dim:
-            return torch.cat([rf_0, rf_1], dim=1), (q_pred, sq_pred, spatial_part)
+            return torch.cat([rf_0, rf_1], dim=1), (q_pred, [s0, s1, s2, s3])
 
         return torch.cat([rf_0, rf_1], dim=1) 
 
