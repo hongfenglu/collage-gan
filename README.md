@@ -1,6 +1,6 @@
 # collage-gan
 
-To train a FastGAN model, run
+To train a baseline FastGAN model, run
 ```bash
 $ python train.py --im_size 256 --iter 50000 --name exp1
 ```
